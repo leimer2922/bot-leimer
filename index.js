@@ -1,57 +1,42 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState } = require("@whiskeysockets/baileys")
+const P = require("pino")
+let estadoBot = true
+const MI_NUMERO = "573004005697"
 
-let botActivo = true;
+async function start() {
+    const { state, saveCreds } = await useMultiFileAuthState("./auth")
+    const sock = makeWASocket({ auth: state, logger: P({ level: "silent" }) })
+    sock.ev.on("creds.update", saveCreds)
 
-const client = new Client({
-    authStrategy: new LocalAuth({ 
-        dataPath: '/app/.wwebjs_auth'
-    }),
-    puppeteer: {
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    }
-});
+    sock.ev.on("connection.update", async (u) => {
+        const { connection } = u
+        if (connection === 'open') console.log("✅ BOT 573004005697 CONECTADO PARA SIEMPRE")
+        if (connection === 'close') start()
+    })
 
-client.on('qr', async (qr) => {
-    console.log('Generando codigo para 573004005697...');
-    try {
-        const code = await client.requestPairingCode("573004005697");
-        console.log("==============================================");
-        console.log("TU CODIGO ES: " + code);
-        console.log("==============================================");
-        console.log("Ve a WhatsApp > Dispositivos vinculados > Vincular con numero");
-        console.log("==============================================");
-    } catch(err){
-        console.log("Error generando codigo: ", err.message);
-    }
-});
-
-client.on('ready', () => {
-    console.log('¡Bot Leimer 24/7 LISTO! Ya puedes cerrar el VS');
-});
-
-client.on('message', async msg => {
-    const texto = msg.body.toLowerCase().trim();
-
-    // COMANDOS DE CONTROL
-    if(texto === 'bot off'){
-        botActivo = false;
-        msg.reply('Bot apagado 🔴 Ya no responderé. Escribe *bot on* para activarme.');
-        return;
-    }
-    if(texto === 'bot on'){
-        botActivo = true;
-        msg.reply('Bot encendido 🟢 Ya estoy activo de nuevo.');
-        return;
+    if (!sock.authState.creds.registered) {
+        console.log("Generando tu UNICO codigo para 573004005697...")
+        await new Promise(r => setTimeout(r, 5000))
+        try {
+            let code = await sock.requestPairingCode(MI_NUMERO)
+            console.log("==============================")
+            console.log("TU CODIGO UNICO ES:", code)
+            console.log("==============================")
+        } catch(e){ console.log("Espera 2 min:", e.message) }
     }
 
-    // Si esta apagado, no hace nada
-    if(!botActivo) return;
+    sock.ev.on("messages.upsert", async (m) => {
+        const msg = m.messages[0]
+        if (!msg.message || msg.key.fromMe) return
+        const from = msg.key.remoteJid
+        const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim()
+        const esOwner = from.includes(MI_NUMERO)
 
-    // TUS RESPUESTAS DEL BOT AQUI
-    if(texto === 'hola'){
-        msg.reply('Hola soy el asistente de leimer, chatbot 24/7 activo 🔥');
-    }
-});
+        if (text === ".off" && esOwner) { estadoBot = false; await sock.sendMessage(from, { text: "❌ Bot APAGADO. Escribe.on para encender" }); return }
+        if (text === ".on" && esOwner) { estadoBot = true; await sock.sendMessage(from, { text: "✅ Bot ENCENDIDO" }); return }
+        if (!estadoBot) return
 
-client.initialize();
+        await sock.sendMessage(from, { text: "Bot activo 🤖. Escribe.off para apagar" })
+    })
+}
+start()
